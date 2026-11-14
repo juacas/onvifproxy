@@ -1,0 +1,20 @@
+services:
+  onvif-fov-proxy:
+    build: .
+    container_name: onvif-fov-proxy
+    restart: unless-stopped
+    ports:
+      - 8211:8211
+      - 8210:8210
+    volumes:
+      - ./cameras.yaml:/app/config/cameras.yaml:ro
+      - ./onvif_fov_proxy.py:/app/onvif_fov_proxy.py:ro
+      - ./calibrate_ptz.py:/app/calibrate_ptz.py:ro
+      - ./fov_math.py:/app/fov_math.py:ro
+      - ./onvif_security.py:/app/onvif_security.py:ro
+      - ./optical_calibration.py:/app/optical_calibration.py:ro
+      - ./calibration.html:/app/calibration.html:ro
+    environment:
+      - CONFIG_PATH=/app/config/cameras.yaml
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TZ=Europe/Madrid

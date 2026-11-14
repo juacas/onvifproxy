@@ -1,0 +1,18 @@
+cameras:
+  c211:
+    proxy_port: 8211
+    ip: "c211.local"      # IP de tu Tapo C211
+    onvif_port: 2020
+    pan_seconds: 1.7          # Segundos para recorrer 1 FOV horizontal completo
+    tilt_seconds: 1.7         # Segundos para recorrer 1 FOV vertical completo
+    speed: 0.8                # Velocidad del motor (0.1 a 1.0)
+    sequential_axes: true     # La C211 no ejecuta pan y tilt simultáneamente
+    snapshot_url: "http://frigate.local:5000/api/c211/latest.jpg"
+
+  c210:
+    proxy_port: 8210
+    ip: "c210.local"      # Ajusta a la IP real de tu Tapo C210
+    onvif_port: 2020
+    pan_seconds: 1.7
+    tilt_seconds: 1.7
+    speed: 0.8

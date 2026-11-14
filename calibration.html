@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calibración ONVIF FOV</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101822; color: #eef4fa; }
+    body { max-width: 1200px; margin: auto; padding: 1.5rem; }
+    h1 { margin-bottom: .3rem; }
+    p { color: #b7c8d8; }
+    .panel { background: #1b2937; padding: 1rem; border-radius: .6rem; margin: 1rem 0; }
+    .fields { display: flex; flex-wrap: wrap; gap: .8rem; }
+    label { display: flex; flex-direction: column; gap: .3rem; flex: 1; min-width: 10rem; }
+    input, button { font: inherit; padding: .55rem; border-radius: .35rem; border: 1px solid #698097; }
+    input { background: #101822; color: white; }
+    button { background: #295e84; color: white; cursor: pointer; }
+    button:hover { background: #387da9; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 13rem; gap: 1rem; }
+    img { display: block; width: 100%; height: auto; background: #0a1119; border-radius: .35rem; }
+    #current { cursor: crosshair; }
+    .viewfinder { position: relative; }
+    .crosshair { position: absolute; inset: 0; pointer-events: none; }
+    img:not([src]) + .crosshair { display: none; }
+    .crosshair::before, .crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,.8); box-shadow: 0 0 2px #000; }
+    .crosshair::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+    .crosshair::after { top: 50%; left: 0; right: 0; height: 1px; }
+    .ptz { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; margin: 1rem 0; }
+    .ptz button { min-height: 3rem; }
+    .compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .compare h3 { margin-bottom: .4rem; }
+    .sample-view { max-width: 760px; }
+    #sample-image { cursor: crosshair; }
+    #sample-list { max-height: 12rem; overflow: auto; }
+    #status { white-space: pre-wrap; min-height: 1.5rem; }
+    .error { color: #ffb6a8; }
+    @media (max-width: 700px) { .layout, .compare { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Calibración PTZ</h1>
+  <p>Haz clic en la imagen actual para mover ese punto hacia el centro. Desactiva el autotracking durante las pruebas.</p>
+  <section class="panel">
+    <div class="fields">
+      <label>Usuario ONVIF <input id="username" autocomplete="username"></label>
+      <label>Contraseña ONVIF <input id="password" type="password" autocomplete="off"></label>
+      <label>Perfil ONVIF <input id="profile" value="profile_1"></label>
+    </div>
+    <p>Las credenciales permanecen en esta página mientras esté abierta. Usa una conexión segura y una red de confianza.</p>
+    <button id="refresh" type="button">Capturar imagen actual</button>
+    <div id="status" role="status" aria-live="polite"></div>
+  </section>
+  <section class="layout">
+    <div class="panel">
+      <h2>Imagen actual</h2>
+      <p>Un clic equivale a un desplazamiento de hasta un FOV por eje.</p>
+      <div class="viewfinder"><img id="current" alt="Imagen actual de la cámara; haz clic para mover"><div class="crosshair" aria-hidden="true"></div></div>
+    </div>
+    <div class="panel">
+      <h2>Controles PTZ</h2>
+      <label>Paso FOV (mayor que 0.01 y hasta 1) <input id="step" type="number" min="0.011" max="1" step="0.01" value="0.2"></label>
+      <div class="ptz">
+        <span></span><button type="button" data-x="0" data-y="1" aria-label="Arriba">↑</button><span></span>
+        <button type="button" data-x="-1" data-y="0" aria-label="Izquierda">←</button><span></span>
+        <button type="button" data-x="1" data-y="0" aria-label="Derecha">→</button>
+        <span></span><button type="button" data-x="0" data-y="-1" aria-label="Abajo">↓</button><span></span>
+      </div>
+      <p>Cada prueba toma una imagen antes, ejecuta el movimiento FOV y captura otra después.</p>
+      <h2>Posición ONVIF</h2>
+      <p id="position" aria-live="polite">Pan: — · Tilt: —</p>
+      <button id="read-position" type="button">Consultar posición</button>
+      <form id="absolute-form">
+        <p>Destino absoluto (−1 a 1)</p>
+        <label>Pan <input id="absolute-pan" type="number" min="-1" max="1" step="any" required></label>
+        <label>Tilt <input id="absolute-tilt" type="number" min="-1" max="1" step="any" required></label>
+        <p><button type="submit">Mover a coordenadas</button></p>
+      </form>
+      <p>El movimiento absoluto requiere soporte ONVIF AbsoluteMove en la cámara.</p>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Comparación</h2>
+    <div class="compare">
+      <div><h3>Antes</h3><div class="viewfinder"><img id="before" alt="Captura anterior al movimiento"><div class="crosshair" aria-hidden="true"></div></div></div>
+      <div><h3>Después</h3><div class="viewfinder"><img id="after" alt="Captura posterior al movimiento"><div class="crosshair" aria-hidden="true"></div></div></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Calibración óptica</h2>
+    <p>Elige un punto fijo lejano y visible. Cambia la posición de la cámara con los controles, espera a que se detenga y prepara una muestra. Pulsa en ese mismo punto en la imagen de muestra. Repite al menos ocho veces, variando ambos ejes y la zona de la imagen. No cambies el zoom ni actives el autotracking.</p>
+    <p>El ajuste supone una cámara de proyección rectilínea, píxeles cuadrados, ejes perpendiculares y coordenadas ONVIF lineales en ángulo. Usa puntos lejanos para reducir errores de paralaje. Las capturas de Frigate pueden tener retraso: comprueba que la imagen corresponde a la posición actual.</p>
+    <button id="prepare-sample" type="button">Preparar muestra</button>
+    <div class="sample-view viewfinder"><img id="sample-image" alt="Muestra congelada; haz clic en el punto fijo"><div class="crosshair" aria-hidden="true"></div></div>
+    <p id="sample-instructions">Prepara una muestra antes de hacer clic.</p>
+    <ol id="sample-list"></ol>
+    <button id="calculate-optical" type="button">Calcular parámetros ópticos</button>
+    <button id="export-optical" type="button">Descargar muestras y resultado</button>
+    <label>Importar muestras guardadas (JSON) <input id="import-optical" type="file" accept=".json,application/json"></label>
+    <button id="clear-optical" type="button">Borrar muestras</button>
+    <pre id="optical-result" aria-live="polite"></pre>
+    <p>El resultado es una estimación; no modifica automáticamente el movimiento FOV del proxy. Guarda el resultado descargándolo si deseas conservarlo.</p>
+  </section>
+  <script>
+    "use strict";
+    const $ = id => document.getElementById(id);
+    let busy = false;
+    function status(message, error = false) {
+      $("status").textContent = message;
+      $("status").classList.toggle("error", error);
+    }
+    function setBusy(value) {
+      busy = value;
+      document.querySelectorAll("button").forEach(button => button.disabled = value);
+    }
+    async function check(response) {
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`;
+        try { const body = await response.json(); message = body.detail || message; } catch (_) {}
+        throw new Error(message);
+      }
+      return response;
+    }
+    function credentials() {
+      if (!$("username").value || !$("password").value || !$("profile").value) {
+        throw new Error("Introduce usuario, contraseña y perfil ONVIF.");
+      }
+      return {username: $("username").value, password: $("password").value, profile: $("profile").value};
+    }
+    async function readPosition() {
+      const response = await check(await fetch("/calibration/status", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(credentials())
+      }));
+      const position = await response.json();
+      $("position").textContent = `Pan: ${position.pan.toFixed(4)} · Tilt: ${position.tilt.toFixed(4)}`;
+      return position;
+    }
+    $("read-position").addEventListener("click", async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        status("Consultando posición ONVIF...");
+        await readPosition();
+        status("Posición recibida de la cámara.");
+      } catch (error) { status(error.message, true); } finally { setBusy(false); }
+    });
+    $("absolute-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      if (busy || !event.currentTarget.reportValidity()) return;
+      setBusy(true);
+      try {
+        const pan = Number($("absolute-pan").value);
+        const tilt = Number($("absolute-tilt").value);
+        if (!Number.isFinite(pan) || !Number.isFinite(tilt) || Math.abs(pan) > 1 || Math.abs(tilt) > 1) {
+          throw new Error("Pan y tilt deben estar entre -1 y 1.");
+        }
+        status("Enviando movimiento absoluto...");
+        const response = await check(await fetch("/calibration/absolute", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({...credentials(), pan, tilt})
+        }));
+        const result = await response.json();
+        status(result.message + " Consulta la posición de nuevo cuando termine.");
+      } catch (error) { status(error.message, true); } finally { setBusy(false); }
+    });
+    $("refresh").addEventListener("click", async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        status("Obteniendo imagen actual...");
+        const response = await check(await fetch("/calibration/snapshot", {cache: "no-store"}));
+        const objectUrl = URL.createObjectURL(await response.blob());
+        if ($("current").src.startsWith("blob:")) URL.revokeObjectURL($("current").src);
+        $("current").src = objectUrl;
+        status("Imagen actualizada.");
+      } catch (error) { status(error.message, true); } finally { setBusy(false); }
+    });
+    async function move(x, y) {
+      if (busy) return;
+      setBusy(true);
+      try {
+        status(`Movimiento FOV: x=${x.toFixed(3)}, y=${y.toFixed(3)}. Capturando antes y después...`);
+        const response = await check(await fetch("/calibration/move", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({...credentials(), x, y})
+        }));
+        const result = await response.json();
+        $("before").src = result.before;
+        $("after").src = result.after;
+        if ($("current").src.startsWith("blob:")) URL.revokeObjectURL($("current").src);
+        $("current").src = result.after;
+        try {
+          await readPosition();
+          status(`Prueba completada: x=${result.x.toFixed(3)}, y=${result.y.toFixed(3)}.`);
+        } catch (error) {
+          status(`Movimiento completado, pero no se pudo consultar la posición: ${error.message}`, true);
+        }
+      } catch (error) { status(error.message, true); } finally { setBusy(false); }
+    }
+    $("current").addEventListener("click", event => {
+      if (!$("current").getAttribute("src")) return;
+      const rect = $("current").getBoundingClientRect();
+      const x = Math.max(-1, Math.min(1, 2 * (event.clientX - rect.left) / rect.width - 1));
+      const y = Math.max(-1, Math.min(1, 1 - 2 * (event.clientY - rect.top) / rect.height));
+      move(x, y);
+    });
+    document.querySelectorAll("[data-x]").forEach(button => button.addEventListener("click", () => {
+      const step = Number($("step").value);
+      if (!Number.isFinite(step) || step <= 0.01 || step > 1) return status("El paso debe ser mayor que 0.01 y como máximo 1.", true);
+      move(Number(button.dataset.x) * step, Number(button.dataset.y) * step);
+    }));
+    let preparedSample = null;
+    let samples = [];
+    let opticalResult = null;
+    let opticalError = null;
+    function renderSamples() {
+      $("sample-list").replaceChildren();
+      samples.forEach((sample, index) => {
+        const row = document.createElement("li");
+        row.textContent = `Pan ${sample.pan.toFixed(4)} · Tilt ${sample.tilt.toFixed(4)} · imagen (${sample.x.toFixed(3)}, ${sample.y.toFixed(3)}) `;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Eliminar";
+        remove.addEventListener("click", () => {
+          samples.splice(index, 1);
+          opticalResult = null;
+          opticalError = null;
+          $("optical-result").textContent = "";
+          $("optical-result").classList.remove("error");
+          renderSamples();
+        });
+        row.appendChild(remove);
+        $("sample-list").appendChild(row);
+      });
+    }
+    async function snapshotUrl() {
+      const response = await check(await fetch("/calibration/snapshot", {cache: "no-store"}));
+      return URL.createObjectURL(await response.blob());
+    }
+    function positionsMatch(a, b) {
+      return Math.abs(a.pan - b.pan) <= 0.002 && Math.abs(a.tilt - b.tilt) <= 0.002;
+    }
+    $("prepare-sample").addEventListener("click", async () => {
+      if (busy) return;
+      setBusy(true);
+      preparedSample = null;
+      $("sample-instructions").textContent = "Preparando imagen y posición...";
+      try {
+        const beforePosition = await readPosition();
+        const imageUrl = await snapshotUrl();
+        let afterPosition;
+        try {
+          afterPosition = await readPosition();
+          if (!positionsMatch(beforePosition, afterPosition)) {
+            throw new Error("La cámara se movió durante la captura. Espera y prepara otra muestra.");
+          }
+        } catch (error) {
+          URL.revokeObjectURL(imageUrl);
+          throw error;
+        }
+        if ($("sample-image").src.startsWith("blob:")) URL.revokeObjectURL($("sample-image").src);
+        $("sample-image").src = imageUrl;
+        preparedSample = afterPosition;
+        $("sample-instructions").textContent = `Pan ${afterPosition.pan.toFixed(4)} · Tilt ${afterPosition.tilt.toFixed(4)}. Haz clic en el punto fijo.`;
+        status("Muestra preparada. Comprueba que la imagen no tenga retraso.");
+      } catch (error) {
+        $("sample-instructions").textContent = "No se preparó la muestra.";
+        status(error.message, true);
+      } finally { setBusy(false); }
+    });
+    $("sample-image").addEventListener("click", async event => {
+      if (busy || !preparedSample) return;
+      const image = $("sample-image");
+      if (!image.naturalWidth || !image.naturalHeight) return status("La imagen no se ha cargado.", true);
+      const rect = image.getBoundingClientRect();
+      const x = Math.max(-1, Math.min(1, 2 * (event.clientX - rect.left) / rect.width - 1));
+      const y = Math.max(-1, Math.min(1, 1 - 2 * (event.clientY - rect.top) / rect.height));
+      setBusy(true);
+      try {
+        const currentPosition = await readPosition();
+        if (!positionsMatch(preparedSample, currentPosition)) {
+          preparedSample = null;
+          $("sample-instructions").textContent = "La cámara se ha movido. Prepara otra muestra.";
+          throw new Error("La posición ya no coincide con la captura.");
+        }
+        if (samples.some(s => positionsMatch(s, preparedSample))) {
+          throw new Error("Ya existe una muestra de esta posición. Mueve la cámara antes de continuar.");
+        }
+        samples.push({...preparedSample, x, y, aspect: image.naturalWidth / image.naturalHeight});
+        preparedSample = null;
+        opticalResult = null;
+        opticalError = null;
+        $("optical-result").textContent = "";
+        $("optical-result").classList.remove("error");
+        renderSamples();
+        $("sample-instructions").textContent = "Muestra registrada. Cambia la posición y prepara otra.";
+        status(`Muestra ${samples.length} registrada; no se ha enviado ningún movimiento.`);
+      } catch (error) { status(error.message, true); } finally { setBusy(false); }
+    });
+    $("calculate-optical").addEventListener("click", async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        status("Calculando parámetros ópticos...");
+        opticalResult = null;
+        opticalError = null;
+        $("optical-result").classList.remove("error");
+        $("optical-result").textContent = "Calculando parámetros ópticos...";
+        const response = await check(await fetch("/calibration/optical", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({samples})
+        }));
+        opticalResult = await response.json();
+        $("optical-result").textContent =
+          `FOV horizontal: ${opticalResult.horizontal_fov_degrees.toFixed(2)}°\n` +
+          `FOV vertical: ${opticalResult.vertical_fov_degrees.toFixed(2)}°\n` +
+          `Pan: ${opticalResult.pan_degrees_per_unit.toFixed(2)}°/unidad ONVIF\n` +
+          `Tilt: ${opticalResult.tilt_degrees_per_unit.toFixed(2)}°/unidad ONVIF\n` +
+          `Inclinación del eje en la referencia: ${opticalResult.reference_axis_tilt_degrees.toFixed(2)}°\n` +
+          `Referencia: pan ${opticalResult.reference_pan.toFixed(4)}, tilt ${opticalResult.reference_tilt.toFixed(4)}\n` +
+          `Error angular RMS: ${opticalResult.rms_error_degrees.toFixed(3)}° · muestras: ${opticalResult.samples}`;
+        status("Estimación calculada. Revisa el error y las hipótesis del modelo.");
+      } catch (error) {
+        opticalError = error.message;
+        $("optical-result").textContent = `No se pudo calcular la calibración: ${opticalError}`;
+        $("optical-result").classList.add("error");
+        status(opticalError, true);
+      } finally { setBusy(false); }
+    });
+    $("clear-optical").addEventListener("click", () => {
+      if (!confirm("¿Borrar todas las muestras ópticas?")) return;
+      samples = [];
+      opticalResult = null;
+      opticalError = null;
+      preparedSample = null;
+      $("optical-result").textContent = "";
+      $("optical-result").classList.remove("error");
+      $("sample-instructions").textContent = "Prepara una muestra antes de hacer clic.";
+      renderSamples();
+    });
+    $("export-optical").addEventListener("click", () => {
+      const url = URL.createObjectURL(new Blob([JSON.stringify({samples, result: opticalResult, error: opticalError}, null, 2)], {type: "application/json"}));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "calibracion-optica.json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    $("import-optical").addEventListener("change", async event => {
+      if (busy || !event.target.files.length) return;
+      setBusy(true);
+      try {
+        const file = event.target.files[0];
+        if (file.size > 1024 * 1024) throw new Error("El archivo supera el límite de 1 MB.");
+        const data = JSON.parse(await file.text());
+        if (!data || !Array.isArray(data.samples) || data.samples.length > 60) {
+          throw new Error("El JSON debe contener una lista de hasta 60 muestras.");
+        }
+        const imported = data.samples.map(sample => {
+          if (!sample || typeof sample !== "object" || Array.isArray(sample)) {
+            throw new Error("Cada muestra debe ser un objeto.");
+          }
+          const {pan, tilt, x, y, aspect} = sample;
+          if (![pan, tilt, x, y, aspect].every(Number.isFinite) ||
+              [pan, tilt, x, y].some(value => Math.abs(value) > 1) ||
+              aspect < 0.5 || aspect > 4) {
+            throw new Error("Una muestra contiene coordenadas o aspecto inválidos.");
+          }
+          return {pan, tilt, x, y, aspect};
+        });
+        samples = imported;
+        preparedSample = null;
+        opticalResult = null;
+        opticalError = null;
+        renderSamples();
+        $("optical-result").classList.remove("error");
+        $("optical-result").textContent = `${samples.length} muestras importadas. Calcula de nuevo los parámetros.`;
+        $("sample-instructions").textContent = "Prepara una muestra antes de hacer clic.";
+        status(`${samples.length} muestras importadas.`);
+      } catch (error) {
+        $("optical-result").textContent = `No se pudieron importar las muestras: ${error.message}`;
+        $("optical-result").classList.add("error");
+        status(error.message, true);
+      } finally {
+        event.target.value = "";
+        setBusy(false);
+      }
+    });
+  </script>
+</body>
+</html>
