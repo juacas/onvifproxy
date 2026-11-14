@@ -178,6 +178,46 @@ Once configured, Frigate will:
 4. The proxy translates and sends calibrated commands to your TAPO camera
 5. The camera moves to keep the object centered
 
+### Quick Verification - Test Before Deep Calibration
+
+**🚀 Good news**: The default values in `cameras.yaml` often work out-of-the-box! Try them first before spending time on detailed calibration.
+
+#### Step 1: Test Basic PTZ Response
+
+1. Start the proxy: `docker compose up -d`
+2. Reconfigure Frigate with the ONVIF proxy endpoint
+3. In Frigate's web interface, you should see a **PTZ crosshair icon** next to the camera
+4. **Click anywhere in the video stream** on a specific object
+5. Observe if the camera moves towards the clicked position
+
+#### Step 2: Verify Centering
+
+- If the clicked object appears roughly **in the center of the view** after the camera moves, calibration is **already good enough** for practical use!
+- Minor off-center positioning is acceptable for autotracking
+
+#### Step 3: Fine-Tune by Trial and Error (If Needed)
+
+If the camera overshoots or undershoots:
+
+1. **Edit `cameras.yaml`** - Adjust calibration values:
+   ```yaml
+   cameras:
+     c210:
+       pan_seconds: 1.7    # Increase if panning too fast, decrease if too slow
+       tilt_seconds: 1.7   # Increase if tilting too fast, decrease if too slow
+   ```
+
+2. **Restart the proxy** - Apply changes immediately:
+   ```bash
+   docker compose restart onvif-fov-proxy
+   ```
+
+3. **Test again** - Click the same object in Frigate and observe the result
+
+4. **Iterate** - Repeat steps 1-3 until satisfied (usually 1-3 attempts)
+
+**💡 Pro tip**: Change values in **0.1 second increments** for fine adjustments. The current calibration is visible in the proxy logs if needed.
+
 ## 🧪 Testing & Diagnostics
 
 ### Probe Camera Capabilities
