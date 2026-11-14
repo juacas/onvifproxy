@@ -27,6 +27,7 @@ logger = logging.getLogger("onvif-fov-proxy")
 
 CONFIG_PATH = os.getenv("CONFIG_PATH", "/app/config/cameras.yaml")
 SOAP_NS = "http://www.w3.org/2003/05/soap-envelope"
+SOAP11_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 PTZ_NS = "http://www.onvif.org/ver20/ptz/wsdl"
 SCHEMA_NS = "http://www.onvif.org/ver10/schema"
 
@@ -141,6 +142,39 @@ def log_proxy_response(cam_name: str, status_code: int, body: bytes | str):
     operation_label = f" operación={operation}" if operation else ""
     logger.info("[%s] <- Cliente: status=%s%s", cam_name, status_code, operation_label)
     log_body(logging.DEBUG, f"[{cam_name}] Respuesta al cliente", body)
+
+
+def is_soap_envelope(body: bytes | str) -> bool:
+    if not body:
+        return False
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return False
+
+    envelope_namespaces = {SOAP_NS, SOAP11_NS}
+    for namespace in envelope_namespaces:
+        if root.tag == f"{{{namespace}}}Envelope":
+            return root.find(f"{{{namespace}}}Body") is not None
+    return False
+
+
+def soap_fault_response(cam_name: str, reason: str) -> Response:
+    fault = f"""<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="{SOAP_NS}">
+  <s:Body>
+    <s:Fault>
+      <s:Code><s:Value>s:Receiver</s:Value></s:Code>
+      <s:Reason><s:Text xml:lang="en">{escape(reason)}</s:Text></s:Reason>
+    </s:Fault>
+  </s:Body>
+</s:Envelope>"""
+    log_proxy_response(cam_name, 502, fault)
+    return Response(
+        content=fault.encode("utf-8"),
+        status_code=502,
+        media_type="application/soap+xml",
+    )
 
 
 def load_config() -> dict:
@@ -570,18 +604,57 @@ def create_camera_app(cam_name: str, cfg: dict) -> FastAPI:
         async with httpx.AsyncClient(timeout=10.0) as client:
             if "RelativeMove" in body_str:
                 sec_header, token, dx, dy = extract_soap_parts(body)
-                await execute_emulated_fov_move(client, f"/{path}", forward_headers, sec_header, token, dx, dy)
+                try:
+                    await execute_emulated_fov_move(
+                        client, f"/{path}", forward_headers, sec_header, token, dx, dy
+                    )
+                except (httpx.HTTPError, RuntimeError) as exc:
+                    logger.warning(
+                        "[%s] RelativeMove failed upstream (%s): %s",
+                        cam_name,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    return soap_fault_response(
+                        cam_name, "The ONVIF camera could not complete the PTZ move."
+                    )
                 log_proxy_response(cam_name, 200, RELATIVE_MOVE_RESPONSE)
                 return Response(content=RELATIVE_MOVE_RESPONSE, media_type="application/soap+xml")
 
-            resp = await request_upstream(
-                client,
-                cam_name,
-                f"{tapo_base_url}/{path}",
-                request.method,
-                body,
-                forward_headers,
-            )
+            try:
+                resp = await request_upstream(
+                    client,
+                    cam_name,
+                    f"{tapo_base_url}/{path}",
+                    request.method,
+                    body,
+                    forward_headers,
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "[%s] ONVIF upstream failed (%s): %s",
+                    cam_name,
+                    type(exc).__name__,
+                    str(exc),
+                )
+                if request.method == "POST":
+                    return soap_fault_response(
+                        cam_name, "The ONVIF camera did not return a response."
+                    )
+                raise HTTPException(
+                    status_code=502, detail="The ONVIF camera did not return a response."
+                ) from exc
+
+            if request.method == "POST" and not is_soap_envelope(resp.content):
+                logger.warning(
+                    "[%s] ONVIF upstream returned a non-SOAP response (HTTP %s)",
+                    cam_name,
+                    resp.status_code,
+                )
+                return soap_fault_response(
+                    cam_name, "The ONVIF camera returned an invalid SOAP response."
+                )
+
             resp_text = resp.text
 
             if resp.is_success and operation == "GetServiceCapabilities":
