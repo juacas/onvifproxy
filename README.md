@@ -111,25 +111,6 @@ python3 onvif_fov_proxy.py
 
 ## ⚙️ Configuration
 
-### Calibrating Pan/Tilt Speed
-
-Each camera needs precise calibration to provide accurate autotracking:
-
-1. **Open the web calibration interface**: `http://localhost:8210/calibration`
-2. **Manual Calibration**:
-   - Send a single-axis movement for 0.5 seconds
-   - Measure what fraction of the video width/height the camera panned/tilted
-   - Use the formula: `seconds_per_fov = movement_seconds / fov_fraction`
-
-3. **Update `cameras.yaml`**:
-```yaml
-cameras:
-  c210:
-    pan_seconds: 1.7   # Adjust based on calibration
-    tilt_seconds: 1.7  # Adjust based on calibration
-    speed: 0.8
-```
-
 ### Optical Calibration (Advanced)
 
 For more precise results using a fixed reference point:
@@ -217,6 +198,25 @@ If the camera overshoots or undershoots:
 4. **Iterate** - Repeat steps 1-3 until satisfied (usually 1-3 attempts)
 
 **💡 Pro tip**: Change values in **0.1 second increments** for fine adjustments. The current calibration is visible in the proxy logs if needed.
+
+## ⚙️ Calibrating Pan/Tilt Speed
+
+Each camera needs precise calibration to provide accurate autotracking:
+
+1. **Open the web calibration interface**: `http://localhost:8210/calibration`
+2. **Manual Calibration**:
+   - Send a single-axis movement for 0.5 seconds
+   - Measure what fraction of the video width/height the camera panned/tilted
+   - Use the formula: `seconds_per_fov = movement_seconds / fov_fraction`
+
+3. **Update `cameras.yaml`**:
+```yaml
+cameras:
+  c210:
+    pan_seconds: 1.7   # Adjust based on calibration
+    tilt_seconds: 1.7  # Adjust based on calibration
+    speed: 0.8
+```
 
 ## 🧪 Testing & Diagnostics
 
