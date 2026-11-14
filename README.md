@@ -375,9 +375,11 @@ cameras:
 
 ### ⚠️ Important Security Notes
 
-1. **Authentication**: The proxy requires TAPO camera credentials (ONVIF user/password)
-   - Store credentials securely
-   - Don't expose to untrusted networks
+1. **Authentication**: The proxy uses the same security token negotiated from Frigate
+   - No need to configure TAPO camera credentials separately in the proxy
+   - Frigate handles the WS-Security authentication with the camera
+   - The proxy transparently forwards the authenticated requests
+   - Credentials are only stored in Frigate's configuration
 
 2. **Web Interface**: The calibration UI is **unauthenticated**
    - Restrict access to trusted networks only
@@ -385,15 +387,16 @@ cameras:
    - Never expose directly to the internet
 
 3. **Credentials Best Practices**:
-   - Use environment variables for sensitive data
-   - Never hardcode credentials in configuration
+   - Store credentials securely in Frigate's configuration
+   - Never hardcode credentials in environment or docker-compose files
    - Use unique usernames/passwords for each camera
-   - Enable firewall rules to restrict access
+   - Enable firewall rules to restrict access to proxy and camera ports
 
 4. **Network Isolation**:
    - Keep proxy and cameras on the same network segment
    - Use VPN for remote access
    - Implement rate limiting for ONVIF endpoints
+   - Don't expose ONVIF ports to the internet
 
 ## 🤝 Contributing
 
